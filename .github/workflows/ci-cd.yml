@@ -1,0 +1,87 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.12"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun test
+
+      - name: Build
+        run: bun run build
+
+      - name: Prepare deploy bundle
+        run: |
+          mkdir -p bundle
+          cp -R dist bundle/dist
+          cp -R scripts bundle/scripts
+          cp README.md bundle/README.md
+          cp DEPLOYMENT.md bundle/DEPLOYMENT.md
+          tar -czf letletme-wechat-bot-dist.tar.gz -C bundle .
+
+      - name: Upload deploy bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: letletme-wechat-bot-dist
+          path: letletme-wechat-bot-dist.tar.gz
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download deploy bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: letletme-wechat-bot-dist
+          path: .
+
+      - name: Create app home on server
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USERNAME }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            mkdir -p /home/workspace/letletme-wechat-bot/{dist,logs,run,state,scripts}
+
+      - name: Copy bundle to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USERNAME }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: "letletme-wechat-bot-dist.tar.gz"
+          target: "/home/workspace/letletme-wechat-bot/"
+          strip_components: 0
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USERNAME }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /home/workspace/letletme-wechat-bot
+            tar -xzf letletme-wechat-bot-dist.tar.gz
+            chmod +x scripts/*.sh
+            ./scripts/rerun.sh
