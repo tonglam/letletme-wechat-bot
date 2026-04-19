@@ -1,8 +1,7 @@
-import type { Credentials } from "@wechatbot/wechatbot";
-
 import type { StoredWechatTarget } from "../../domain/target-registry.ts";
 import type { ClawbotAuthClient, PollQrStatusResult, QrCodeResult } from "../../integrations/wechat/clawbot-auth-client.ts";
 import type { WechatBridgeStateStore } from "../../integrations/wechat/bridge-state-store.ts";
+import type { WechatCredentials } from "../../integrations/wechat/wechat-types.ts";
 
 export type BindingSummary = {
   status: "unbound" | "pending" | "confirmed";
@@ -28,10 +27,16 @@ export interface BindingAdminServicePort {
   resetBinding(): Promise<{ cleared: boolean }>;
 }
 
+type SyncLifecyclePort = {
+  start(): void;
+  stop(): void;
+};
+
 export class BindingAdminService implements BindingAdminServicePort {
   constructor(
     private readonly authClient: ClawbotAuthClient,
-    private readonly stateStore: WechatBridgeStateStore
+    private readonly stateStore: WechatBridgeStateStore,
+    private readonly syncService?: SyncLifecyclePort
   ) {}
 
   async createQrCode(): Promise<QrCodeResult> {
@@ -50,10 +55,21 @@ export class BindingAdminService implements BindingAdminServicePort {
       throw new Error("No pending QR binding exists. Start a new QR binding first.");
     }
 
-    const status = await this.authClient.pollQrStatus(pendingQr.qrcode);
+    const status = await this.authClient.pollQrStatus(pendingQr.qrcode, {
+      baseUrl: pendingQr.pollBaseUrl
+    });
+
+    if (status.redirectBaseUrl && status.status === "scaned") {
+      await this.stateStore.setPendingQr({
+        ...pendingQr,
+        pollBaseUrl: status.redirectBaseUrl
+      });
+    }
+
     if (status.status === "confirmed" && status.credentials) {
       await this.stateStore.setCredentials(status.credentials);
       await this.stateStore.clearPendingQr();
+      this.syncService?.start();
     }
 
     if (status.status === "expired") {
@@ -84,14 +100,7 @@ export class BindingAdminService implements BindingAdminServicePort {
   }
 
   async resetBinding(): Promise<{ cleared: boolean }> {
-    const credentials = await this.stateStore.getCredentials();
-    if (credentials) {
-      await this.authClient.resetChannel({
-        botToken: credentials.token,
-        channelId: credentials.accountId
-      });
-    }
-
+    this.syncService?.stop();
     await this.stateStore.clearBindingState();
 
     return { cleared: true };
@@ -99,7 +108,7 @@ export class BindingAdminService implements BindingAdminServicePort {
 }
 
 function summarizeBinding(
-  credentials: Credentials | undefined,
+  credentials: WechatCredentials | undefined,
   pendingQr: Awaited<ReturnType<WechatBridgeStateStore["getPendingQr"]>>
 ): BindingSummary {
   if (credentials) {

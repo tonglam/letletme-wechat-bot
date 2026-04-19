@@ -19,7 +19,41 @@ export class NotificationService implements NotificationServicePort {
 
   async send(notification: NotificationRequest): Promise<NotificationResult> {
     const failures: NotificationFailure[] = [];
-    const targets = await this.resolveTargets(notification);
+    let targets;
+
+    try {
+      targets = await this.resolveTargets(notification);
+    } catch (error) {
+      return {
+        status: "partial_failure",
+        notificationType: notification.type,
+        requestedCount: 0,
+        deliveredCount: 0,
+        failedCount: 1,
+        failures: [
+          {
+            target: this.failureTarget(notification),
+            message: error instanceof Error ? error.message : "Unknown target resolution error."
+          }
+        ]
+      };
+    }
+
+    if (targets.length === 0) {
+      return {
+        status: "partial_failure",
+        notificationType: notification.type,
+        requestedCount: 0,
+        deliveredCount: 0,
+        failedCount: 1,
+        failures: [
+          {
+            target: this.failureTarget(notification),
+            message: this.noTargetsMessage(notification)
+          }
+        ]
+      };
+    }
 
     for (const target of targets) {
       try {
@@ -69,6 +103,22 @@ export class NotificationService implements NotificationServicePort {
     }
 
     return [];
+  }
+
+  private failureTarget(notification: NotificationRequest) {
+    if (notification.targets.length > 0) {
+      return notification.targets.join(",");
+    }
+
+    return "(default)";
+  }
+
+  private noTargetsMessage(notification: NotificationRequest) {
+    if (notification.type === "text" && !this.options.defaultTextTargetAlias) {
+      return "No targets were provided and DEFAULT_TEXT_TARGET_ALIAS is not configured.";
+    }
+
+    return "No target aliases resolved for notification.";
   }
 
   private formatText(text: string) {

@@ -1,40 +1,28 @@
-import type { Credentials } from "@wechatbot/wechatbot";
-
-type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+import { IlinkHttpClient, WechatApiError } from "./ilink-http-client.ts";
+import { buildCommonHeaders, type Fetcher } from "./ilink-helpers.ts";
+import type { PendingQrStatus, WechatCredentials } from "./wechat-types.ts";
 
 type ClawbotAuthClientOptions = {
   baseUrl: string;
+  channelVersion: string;
+  skRouteTag?: string | undefined;
   fetcher?: Fetcher;
+  now?: () => number;
 };
 
-type QrcodeApiResponse = {
-  success?: boolean;
-  message?: string;
-  data?: {
-    qrcode?: string;
-    qrcode_url?: string;
-  };
+type RawQrCodeResponse = {
+  qrcode?: string;
+  qrcode_img_content?: string;
+  qrcode_url?: string;
 };
 
-type QrcodeStatusApiResponse = {
-  success?: boolean;
-  message?: string;
-  data?: {
-    status?: "wait" | "scaned" | "confirmed" | "expired";
-    credentials?: {
-      bot_token?: string;
-      ilink_bot_id?: string;
-      ilink_user_id?: string;
-    } | null;
-    baseurl?: string;
-  };
-};
-
-type ResetChannelApiResponse = {
-  message?: string;
-  data?: {
-    channel_id?: string;
-  };
+type RawQrStatusResponse = {
+  status?: PendingQrStatus | "scaned_but_redirect";
+  bot_token?: string;
+  ilink_bot_id?: string;
+  ilink_user_id?: string;
+  baseurl?: string;
+  redirect_host?: string;
 };
 
 export type QrCodeResult = {
@@ -43,8 +31,9 @@ export type QrCodeResult = {
 };
 
 export type PollQrStatusResult = {
-  status: "wait" | "scaned" | "confirmed" | "expired";
-  credentials?: Credentials | undefined;
+  status: PendingQrStatus;
+  credentials?: WechatCredentials | undefined;
+  redirectBaseUrl?: string | undefined;
 };
 
 export class WechatBridgeAuthError extends Error {
@@ -58,108 +47,115 @@ export class WechatBridgeAuthError extends Error {
 }
 
 export class ClawbotAuthClient {
-  private readonly fetcher: Fetcher;
+  private readonly httpClient: IlinkHttpClient;
+  private readonly now: () => number;
 
   constructor(private readonly options: ClawbotAuthClientOptions) {
-    this.fetcher = options.fetcher ?? fetch;
+    this.httpClient = new IlinkHttpClient(options.fetcher ? {
+      fetcher: options.fetcher
+    } : {});
+    this.now = options.now ?? Date.now;
   }
 
   async createQrCode(): Promise<QrCodeResult> {
-    const body = await this.call<QrcodeApiResponse>("/api/v1/wechat/qrcode", {
-      method: "POST"
-    });
+    try {
+      const body = await this.httpClient.get<RawQrCodeResponse>(
+        this.options.baseUrl,
+        "/ilink/bot/get_bot_qrcode?bot_type=3",
+        {
+          headers: buildCommonHeaders(this.options.channelVersion, this.options.skRouteTag)
+        }
+      );
 
-    const qrcode = body.data?.qrcode;
-    const qrcodeUrl = body.data?.qrcode_url;
+      const qrcode = body.qrcode;
+      const qrcodeUrl = body.qrcode_img_content ?? body.qrcode_url;
 
-    if (!qrcode || !qrcodeUrl) {
-      throw new WechatBridgeAuthError("QR code response is missing required fields.", {
-        statusCode: 502
-      });
-    }
-
-    return {
-      qrcode,
-      qrcodeUrl
-    };
-  }
-
-  async pollQrStatus(qrcode: string): Promise<PollQrStatusResult> {
-    const body = await this.call<QrcodeStatusApiResponse>("/api/v1/wechat/qrcode/status", {
-      method: "POST",
-      body: JSON.stringify({ qrcode })
-    });
-
-    const status = body.data?.status;
-    if (!status) {
-      throw new WechatBridgeAuthError("QR status response is missing the status field.", {
-        statusCode: 502
-      });
-    }
-
-    if (status !== "confirmed") {
-      return { status };
-    }
-
-    const credentials = body.data?.credentials;
-    const baseUrl = body.data?.baseurl;
-    if (!credentials?.bot_token || !credentials.ilink_bot_id || !credentials.ilink_user_id || !baseUrl) {
-      throw new WechatBridgeAuthError("Confirmed QR status response is missing credentials.", {
-        statusCode: 502
-      });
-    }
-
-    return {
-      status,
-      credentials: {
-        token: credentials.bot_token,
-        accountId: credentials.ilink_bot_id,
-        userId: credentials.ilink_user_id,
-        baseUrl,
-        savedAt: new Date().toISOString()
+      if (!qrcode || !qrcodeUrl) {
+        throw new WechatBridgeAuthError("QR code response is missing required fields.", {
+          statusCode: 502
+        });
       }
-    };
-  }
 
-  async resetChannel(input: { botToken: string; channelId: string }): Promise<{ channelId: string }> {
-    const body = await this.call<ResetChannelApiResponse>("/api/v1/wechat/channel_reset", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${input.botToken}`
-      },
-      body: JSON.stringify({ channel_id: input.channelId })
-    });
-
-    return {
-      channelId: body.data?.channel_id ?? input.channelId
-    };
-  }
-
-  private async call<T>(path: string, init: RequestInit): Promise<T> {
-    const response = await this.fetcher(`${this.options.baseUrl}${path}`, {
-      ...init,
-      headers: {
-        "content-type": "application/json",
-        ...(init.headers ?? {})
-      }
-    });
-    const body = (await parseJsonSafely(response)) as T & { success?: boolean; message?: string };
-
-    if (!response.ok || body?.success === false) {
-      throw new WechatBridgeAuthError(body?.message ?? "WeChat bootstrap request failed.", {
-        statusCode: response.status
-      });
+      return {
+        qrcode,
+        qrcodeUrl
+      };
+    } catch (error) {
+      throw mapAuthError(error);
     }
+  }
 
-    return body;
+  async pollQrStatus(
+    qrcode: string,
+    options: { baseUrl?: string | undefined } = {}
+  ): Promise<PollQrStatusResult> {
+    try {
+      const body = await this.httpClient.get<RawQrStatusResponse>(
+        options.baseUrl ?? this.options.baseUrl,
+        `/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`,
+        {
+          headers: buildCommonHeaders(this.options.channelVersion, this.options.skRouteTag)
+        }
+      );
+
+      const status = body.status;
+      if (!status) {
+        throw new WechatBridgeAuthError("QR status response is missing the status field.", {
+          statusCode: 502
+        });
+      }
+
+      if (status === "scaned_but_redirect") {
+        return {
+          status: "scaned",
+          redirectBaseUrl: body.redirect_host ? `https://${body.redirect_host}` : undefined
+        };
+      }
+
+      if (status !== "confirmed") {
+        return { status };
+      }
+
+      if (!body.bot_token || !body.ilink_bot_id || !body.ilink_user_id) {
+        throw new WechatBridgeAuthError("Confirmed QR status response is missing credentials.", {
+          statusCode: 502
+        });
+      }
+
+      return {
+        status,
+        credentials: {
+          token: body.bot_token,
+          accountId: body.ilink_bot_id,
+          userId: body.ilink_user_id,
+          baseUrl: body.baseurl ?? this.options.baseUrl,
+          savedAt: new Date(this.now()).toISOString()
+        }
+      };
+    } catch (error) {
+      throw mapAuthError(error);
+    }
   }
 }
 
-async function parseJsonSafely(response: Response): Promise<unknown> {
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/json")) {
-    return undefined;
+function mapAuthError(error: unknown) {
+  if (error instanceof WechatBridgeAuthError) {
+    return error;
   }
 
-  return response.json();
+  if (error instanceof WechatApiError) {
+    return new WechatBridgeAuthError(error.message, {
+      statusCode: error.statusCode
+    });
+  }
+
+  if (error instanceof Error) {
+    return new WechatBridgeAuthError(error.message, {
+      statusCode: 500
+    });
+  }
+
+  return new WechatBridgeAuthError("Unknown WeChat bootstrap error.", {
+    statusCode: 500
+  });
 }

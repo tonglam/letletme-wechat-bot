@@ -1,7 +1,7 @@
 export type ResolvedWechatTarget = {
   alias: string;
   userId: string;
-  contextToken: string;
+  contextToken?: string | undefined;
 };
 
 export type StoredWechatTarget = ResolvedWechatTarget & {

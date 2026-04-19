@@ -1,39 +1,41 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import type { Credentials } from "@wechatbot/wechatbot";
-
 import type { StoredWechatTarget, WechatTargetRegistry } from "../../domain/target-registry.ts";
+import type { WechatCredentials } from "./wechat-types.ts";
 
 export type PendingQr = {
   qrcode: string;
   qrcodeUrl: string;
   createdAt: string;
+  pollBaseUrl?: string | undefined;
 };
 
 type BridgeState = {
-  version: 1;
-  credentials?: Credentials | undefined;
+  version: 2;
+  credentials?: WechatCredentials | undefined;
   contextTokens: Record<string, string>;
+  cursor: string;
   pendingQr?: PendingQr | undefined;
   targets: Record<string, StoredWechatTarget>;
 };
 
 const EMPTY_STATE: BridgeState = {
-  version: 1,
+  version: 2,
   contextTokens: {},
+  cursor: "",
   targets: {}
 };
 
 export class WechatBridgeStateStore implements WechatTargetRegistry {
   constructor(private readonly stateFilePath: string) {}
 
-  async getCredentials(): Promise<Credentials | undefined> {
+  async getCredentials(): Promise<WechatCredentials | undefined> {
     const state = await this.loadState();
     return state.credentials;
   }
 
-  async setCredentials(credentials: Credentials): Promise<void> {
+  async setCredentials(credentials: WechatCredentials): Promise<void> {
     const state = await this.loadState();
     state.credentials = credentials;
     await this.saveState(state);
@@ -50,21 +52,49 @@ export class WechatBridgeStateStore implements WechatTargetRegistry {
     return state.contextTokens;
   }
 
-  async setContextToken(userId: string, contextToken: string): Promise<void> {
+  async getContextToken(userId: string): Promise<string | undefined> {
     const state = await this.loadState();
-    state.contextTokens[userId] = contextToken;
-    await this.saveState(state);
+    return state.contextTokens[userId];
   }
 
-  async replaceContextTokens(tokens: Record<string, string>): Promise<void> {
+  async rememberContextToken(userId: string, contextToken: string): Promise<void> {
     const state = await this.loadState();
-    state.contextTokens = tokens;
+    state.contextTokens[userId] = contextToken;
+
+    for (const target of Object.values(state.targets)) {
+      if (target.userId === userId) {
+        target.contextToken = contextToken;
+        target.updatedAt = new Date().toISOString();
+      }
+    }
+
     await this.saveState(state);
   }
 
   async clearContextTokens(): Promise<void> {
     const state = await this.loadState();
     state.contextTokens = {};
+    for (const target of Object.values(state.targets)) {
+      target.contextToken = undefined;
+      target.updatedAt = new Date().toISOString();
+    }
+    await this.saveState(state);
+  }
+
+  async getCursor(): Promise<string> {
+    const state = await this.loadState();
+    return state.cursor;
+  }
+
+  async setCursor(cursor: string): Promise<void> {
+    const state = await this.loadState();
+    state.cursor = cursor;
+    await this.saveState(state);
+  }
+
+  async clearCursor(): Promise<void> {
+    const state = await this.loadState();
+    state.cursor = "";
     await this.saveState(state);
   }
 
@@ -90,6 +120,13 @@ export class WechatBridgeStateStore implements WechatTargetRegistry {
     state.credentials = undefined;
     state.pendingQr = undefined;
     state.contextTokens = {};
+    state.cursor = "";
+
+    for (const target of Object.values(state.targets)) {
+      target.contextToken = undefined;
+      target.updatedAt = new Date().toISOString();
+    }
+
     await this.saveState(state);
   }
 
@@ -102,19 +139,28 @@ export class WechatBridgeStateStore implements WechatTargetRegistry {
         throw new Error(`Unknown target alias: ${alias}`);
       }
 
-      return target;
+      return {
+        ...target,
+        contextToken: target.contextToken ?? state.contextTokens[target.userId]
+      };
     });
   }
 
   async upsert(target: StoredWechatTarget): Promise<StoredWechatTarget> {
     const state = await this.loadState();
-    const storedTarget = {
-      ...target,
+    const existing = state.targets[target.alias];
+    const contextToken = target.contextToken ?? existing?.contextToken ?? state.contextTokens[target.userId];
+    const storedTarget: StoredWechatTarget = {
+      alias: target.alias,
+      userId: target.userId,
+      contextToken,
       updatedAt: new Date().toISOString()
     };
 
     state.targets[target.alias] = storedTarget;
-    state.contextTokens[target.userId] = target.contextToken;
+    if (contextToken) {
+      state.contextTokens[target.userId] = contextToken;
+    }
     await this.saveState(state);
 
     return storedTarget;
@@ -122,7 +168,12 @@ export class WechatBridgeStateStore implements WechatTargetRegistry {
 
   async list(): Promise<StoredWechatTarget[]> {
     const state = await this.loadState();
-    return Object.values(state.targets).sort((left, right) => left.alias.localeCompare(right.alias));
+    return Object.values(state.targets)
+      .map((target) => ({
+        ...target,
+        contextToken: target.contextToken ?? state.contextTokens[target.userId]
+      }))
+      .sort((left, right) => left.alias.localeCompare(right.alias));
   }
 
   async remove(alias: string): Promise<boolean> {
@@ -133,7 +184,6 @@ export class WechatBridgeStateStore implements WechatTargetRegistry {
     }
 
     delete state.targets[alias];
-    delete state.contextTokens[target.userId];
     await this.saveState(state);
     return true;
   }
@@ -143,8 +193,9 @@ export class WechatBridgeStateStore implements WechatTargetRegistry {
       const raw = await readFile(this.stateFilePath, "utf8");
       const parsed = JSON.parse(raw) as Partial<BridgeState>;
       return {
-        version: 1,
+        version: 2,
         contextTokens: parsed.contextTokens ?? {},
+        cursor: parsed.cursor ?? "",
         targets: parsed.targets ?? {},
         credentials: parsed.credentials,
         pendingQr: parsed.pendingQr

@@ -11,7 +11,6 @@
     "build": "bun build src/index.ts --target bun --outdir dist --sourcemap"
   },
   "dependencies": {
-    "@wechatbot/wechatbot": "^2.1.1",
     "elysia": "^1.1.25"
   },
   "devDependencies": {

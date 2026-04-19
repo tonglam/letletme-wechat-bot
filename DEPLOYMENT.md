@@ -13,7 +13,7 @@
 ├── dist/          # bundled Bun output
 ├── logs/          # console logs
 ├── run/           # PID tracking
-├── state/         # binding state + target registry
+├── state/         # binding state, cursor, context tokens, target registry
 ├── scripts/       # start/stop/rerun/monitor helpers
 └── .env           # exported env vars
 ```
@@ -37,12 +37,14 @@ WECHAT_STATE_FILE_PATH=/home/workspace/letletme-wechat-bot/state/wechat-state.js
 Optional:
 
 ```bash
-PORT=8026
+PORT=8027
 TIMEZONE=UTC
 NOTIFICATION_API_TOKEN=***
 ADMIN_API_TOKEN=***
 DEFAULT_TEXT_TARGET_ALIAS=deploy-alerts
-WECHAT_BOOTSTRAP_BASE_URL=https://weknora.weixin.qq.com
+WECHAT_BOOTSTRAP_BASE_URL=https://ilinkai.weixin.qq.com
+WECHAT_CHANNEL_VERSION=1.0.0
+WECHAT_SK_ROUTE_TAG=
 BUN_CMD=/home/deploy/.bun/bin/bun
 ```
 
@@ -56,18 +58,26 @@ BUN_CMD=/home/deploy/.bun/bin/bun
 ## Bootstrap Workflow
 
 1. Deploy the service and confirm the HTTP server is reachable.
-2. Call `POST /wechatBot/letletme/admin/binding/qrcode` to get a fresh QR URL.
-3. Scan and confirm the QR code in WeChat.
-4. Call `POST /wechatBot/letletme/admin/binding/poll` until it returns `confirmed`.
-5. Register target aliases with `POST /wechatBot/letletme/admin/targets`.
-6. Send notifications through `POST /wechatBot/letletme/notification`.
+2. Open `GET /wechatBot/letletme/admin?token=<ADMIN_API_TOKEN>` in a browser when admin auth is enabled.
+3. Generate a fresh QR code from the admin page or call `POST /wechatBot/letletme/admin/binding/qrcode`.
+4. Scan and confirm the QR code in WeChat.
+5. Wait for the page or `POST /wechatBot/letletme/admin/binding/poll` to reach `confirmed`.
+6. Register target aliases with `POST /wechatBot/letletme/admin/targets`.
+7. Let the user send at least one inbound message so the sync loop learns a fresh `context_token`.
+8. Optionally set `DEFAULT_TEXT_TARGET_ALIAS` for targetless text notifications.
+9. Send notifications through `POST /wechatBot/letletme/notification`.
 
 ## GitHub Actions Secrets
 
-Configure these repository secrets for deployment:
+Configure this repository secret for deployment:
+
+```bash
+DEPLOY_SSH_KEY=<private key>
+```
+
+Configure these repository variables:
 
 ```bash
 DEPLOY_HOST=43.163.91.9
 DEPLOY_USERNAME=<deploy user>
-DEPLOY_SSH_KEY=<private key>
 ```

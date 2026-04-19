@@ -6,9 +6,14 @@ export type AppEnv = {
   adminApiToken: string | undefined;
   defaultTextTargetAlias: string | undefined;
   wechatBootstrapBaseUrl: string;
+  wechatChannelVersion: string;
+  wechatSkRouteTag: string | undefined;
 };
 
 type EnvSource = Record<string, string | undefined>;
+
+const DEFAULT_BOOTSTRAP_BASE_URL = "https://ilinkai.weixin.qq.com";
+const DEFAULT_CHANNEL_VERSION = "1.0.0";
 
 export function parseEnv(source: EnvSource): AppEnv {
   const stateFilePath = source.WECHAT_STATE_FILE_PATH?.trim();
@@ -23,7 +28,9 @@ export function parseEnv(source: EnvSource): AppEnv {
     notificationApiToken: source.NOTIFICATION_API_TOKEN?.trim() || undefined,
     adminApiToken: source.ADMIN_API_TOKEN?.trim() || undefined,
     defaultTextTargetAlias: source.DEFAULT_TEXT_TARGET_ALIAS?.trim() || undefined,
-    wechatBootstrapBaseUrl: source.WECHAT_BOOTSTRAP_BASE_URL?.trim() || "https://weknora.weixin.qq.com"
+    wechatBootstrapBaseUrl: source.WECHAT_BOOTSTRAP_BASE_URL?.trim() || DEFAULT_BOOTSTRAP_BASE_URL,
+    wechatChannelVersion: source.WECHAT_CHANNEL_VERSION?.trim() || DEFAULT_CHANNEL_VERSION,
+    wechatSkRouteTag: source.WECHAT_SK_ROUTE_TAG?.trim() || undefined
   };
 }
 

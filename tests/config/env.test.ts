@@ -16,7 +16,9 @@ describe("parseEnv", () => {
         NOTIFICATION_API_TOKEN: "notify-secret",
         ADMIN_API_TOKEN: "admin-secret",
         DEFAULT_TEXT_TARGET_ALIAS: "ops-group",
-        WECHAT_BOOTSTRAP_BASE_URL: "https://weknora.weixin.qq.com"
+        WECHAT_BOOTSTRAP_BASE_URL: "https://ilinkai.weixin.qq.com",
+        WECHAT_CHANNEL_VERSION: "1.2.3",
+        WECHAT_SK_ROUTE_TAG: "route-a"
       })
     ).toEqual({
       stateFilePath: "/tmp/wechat-state.json",
@@ -25,7 +27,9 @@ describe("parseEnv", () => {
       notificationApiToken: "notify-secret",
       adminApiToken: "admin-secret",
       defaultTextTargetAlias: "ops-group",
-      wechatBootstrapBaseUrl: "https://weknora.weixin.qq.com"
+      wechatBootstrapBaseUrl: "https://ilinkai.weixin.qq.com",
+      wechatChannelVersion: "1.2.3",
+      wechatSkRouteTag: "route-a"
     });
   });
 
@@ -41,7 +45,20 @@ describe("parseEnv", () => {
       notificationApiToken: undefined,
       adminApiToken: undefined,
       defaultTextTargetAlias: undefined,
-      wechatBootstrapBaseUrl: "https://weknora.weixin.qq.com"
+      wechatBootstrapBaseUrl: "https://ilinkai.weixin.qq.com",
+      wechatChannelVersion: "1.0.0",
+      wechatSkRouteTag: undefined
     });
+  });
+
+  test("does not require OpenAPI signing env vars", () => {
+    expect(
+      () =>
+        parseEnv({
+          WECHAT_STATE_FILE_PATH: "/tmp/wechat-state.json",
+          WECHAT_OPENAPI_APP_ID: "",
+          WECHAT_OPENAPI_SECRET_KEY: ""
+        })
+    ).not.toThrow();
   });
 });

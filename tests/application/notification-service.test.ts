@@ -6,7 +6,7 @@ import type { WechatBridgeClient } from "../../src/integrations/wechat/wechat-br
 
 describe("NotificationService", () => {
   test("sends text notifications through the message path", async () => {
-    const calls: Array<{ kind: string; userId: string; contextToken: string; text?: string; imageUrl?: string; caption?: string | undefined }> = [];
+    const calls: Array<{ kind: string; userId: string; contextToken?: string | undefined; text?: string; imageUrl?: string; caption?: string | undefined }> = [];
     const client: WechatBridgeClient = {
       sendText: async ({ userId, contextToken, text }) => {
         calls.push({ kind: "text", userId, contextToken, text });
@@ -67,7 +67,7 @@ describe("NotificationService", () => {
   });
 
   test("uses the configured default text target alias when none is provided", async () => {
-    const calls: Array<{ userId: string; contextToken: string; text: string }> = [];
+    const calls: Array<{ userId: string; contextToken?: string | undefined; text: string }> = [];
     const client: WechatBridgeClient = {
       sendText: async ({ userId, contextToken, text }) => {
         calls.push({ userId, contextToken, text });
@@ -172,8 +172,55 @@ describe("NotificationService", () => {
     });
   });
 
+  test("returns partial failure when a text notification resolves to zero targets", async () => {
+    const client: WechatBridgeClient = {
+      sendText: async () => {
+        throw new Error("sendText should not be called");
+      },
+      sendImage: async () => {
+        throw new Error("sendImage should not be called");
+      }
+    };
+    const registry: WechatTargetRegistry = {
+      async resolveAliases() {
+        return [];
+      },
+      async upsert() {
+        throw new Error("not used");
+      },
+      async list() {
+        return [];
+      },
+      async remove() {
+        return false;
+      }
+    };
+
+    const service = new NotificationService(client, registry);
+
+    const result = await service.send({
+      type: "text",
+      targets: [],
+      text: "hello"
+    });
+
+    expect(result).toEqual({
+      status: "partial_failure",
+      notificationType: "text",
+      requestedCount: 0,
+      deliveredCount: 0,
+      failedCount: 1,
+      failures: [
+        {
+          target: "(default)",
+          message: "No targets were provided and DEFAULT_TEXT_TARGET_ALIAS is not configured."
+        }
+      ]
+    });
+  });
+
   test("sends image notifications through the image path and preserves caption", async () => {
-    const calls: Array<{ userId: string; contextToken: string; imageUrl: string; caption: string | undefined }> = [];
+    const calls: Array<{ userId: string; contextToken?: string | undefined; imageUrl: string; caption: string | undefined }> = [];
     const client: WechatBridgeClient = {
       sendText: async () => {
         throw new Error("sendText should not be called");

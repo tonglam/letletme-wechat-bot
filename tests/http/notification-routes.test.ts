@@ -136,6 +136,32 @@ describe("http routes", () => {
     });
   });
 
+  test("serves an admin qr page shell", async () => {
+    const service: NotificationServicePort = {
+      send: async () => {
+        throw new Error("send should not be called");
+      }
+    };
+    const app = createApp({
+      notificationService: service,
+      adminService,
+      notificationApiToken: undefined,
+      adminApiToken: "admin-secret"
+    });
+
+    const response = await app.handle(
+      new Request("http://localhost/wechatBot/letletme/admin", {
+        headers: {
+          authorization: "Bearer admin-secret"
+        }
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    await expect(response.text()).resolves.toContain("WeChat Admin");
+  });
+
   test("rejects unauthorized admin callers when an admin API token is configured", async () => {
     const service: NotificationServicePort = {
       send: async () => {
@@ -181,8 +207,7 @@ describe("http routes", () => {
         },
         body: JSON.stringify({
           alias: "ops-group",
-          userId: "ops-group@im.wechat",
-          contextToken: "ops-ctx"
+          userId: "ops-group@im.wechat"
         })
       })
     );
@@ -190,8 +215,7 @@ describe("http routes", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       alias: "ops-group",
-      userId: "ops-group@im.wechat",
-      contextToken: "ops-ctx"
+      userId: "ops-group@im.wechat"
     });
   });
 });

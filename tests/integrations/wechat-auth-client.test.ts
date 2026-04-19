@@ -7,18 +7,19 @@ describe("ClawbotAuthClient", () => {
     mock.restore();
   });
 
-  test("creates a qrcode binding request", async () => {
+  test("creates a qrcode binding request through the raw iLink endpoint", async () => {
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("https://weknora.weixin.qq.com/api/v1/wechat/qrcode");
-      expect(init?.method).toBe("POST");
+      expect(String(input)).toBe("https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3");
+      expect(init?.method).toBe("GET");
+      expect(init?.headers).toEqual({
+        "iLink-App-Id": "bot",
+        "iLink-App-ClientVersion": "65536"
+      });
 
       return new Response(
         JSON.stringify({
-          success: true,
-          data: {
-            qrcode: "qr-token",
-            qrcode_url: "https://example.com/qr.png"
-          }
+          qrcode: "qr-token",
+          qrcode_img_content: "https://example.com/qr.png"
         }),
         {
           status: 200,
@@ -30,7 +31,8 @@ describe("ClawbotAuthClient", () => {
     });
 
     const client = new ClawbotAuthClient({
-      baseUrl: "https://weknora.weixin.qq.com",
+      baseUrl: "https://ilinkai.weixin.qq.com",
+      channelVersion: "1.0.0",
       fetcher: fetchMock
     });
 
@@ -41,19 +43,21 @@ describe("ClawbotAuthClient", () => {
   });
 
   test("maps confirmed qrcode status into persisted credentials", async () => {
-    const fetchMock = mock(async () => {
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://redirect.ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=qr-token");
+      expect(init?.method).toBe("GET");
+      expect(init?.headers).toEqual({
+        "iLink-App-Id": "bot",
+        "iLink-App-ClientVersion": "65536"
+      });
+
       return new Response(
         JSON.stringify({
-          success: true,
-          data: {
-            status: "confirmed",
-            credentials: {
-              bot_token: "bot-token",
-              ilink_bot_id: "bot@im.bot",
-              ilink_user_id: "user@im.wechat"
-            },
-            baseurl: "https://ilinkai.weixin.qq.com"
-          }
+          status: "confirmed",
+          bot_token: "bot-token",
+          ilink_bot_id: "bot@im.bot",
+          ilink_user_id: "user@im.wechat",
+          baseurl: "https://sh.ilinkai.weixin.qq.com"
         }),
         {
           status: 200,
@@ -65,52 +69,56 @@ describe("ClawbotAuthClient", () => {
     });
 
     const client = new ClawbotAuthClient({
-      baseUrl: "https://weknora.weixin.qq.com",
+      baseUrl: "https://ilinkai.weixin.qq.com",
+      channelVersion: "1.0.0",
       fetcher: fetchMock
     });
 
-    const result = await client.pollQrStatus("qr-token");
+    const result = await client.pollQrStatus("qr-token", {
+      baseUrl: "https://redirect.ilinkai.weixin.qq.com"
+    });
 
     expect(result.status).toBe("confirmed");
     expect(result.credentials).toEqual({
       token: "bot-token",
-      baseUrl: "https://ilinkai.weixin.qq.com",
+      baseUrl: "https://sh.ilinkai.weixin.qq.com",
       accountId: "bot@im.bot",
       userId: "user@im.wechat",
       savedAt: expect.any(String)
     });
   });
 
-  test("resets the channel with bearer auth", async () => {
-    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("https://weknora.weixin.qq.com/api/v1/wechat/channel_reset");
-      expect(init?.headers).toEqual({
-        "content-type": "application/json",
-        authorization: "Bearer bot-token"
-      });
-      expect(init?.body).toBe(JSON.stringify({ channel_id: "bot@im.bot" }));
-
-      return new Response(JSON.stringify({ data: { channel_id: "bot@im.bot" } }), {
-        status: 200,
-        headers: {
-          "content-type": "application/json"
+  test("surfaces redirect polling hints without requiring OpenAPI headers", async () => {
+    const fetchMock = mock(async () => {
+      return new Response(
+        JSON.stringify({
+          status: "scaned_but_redirect",
+          redirect_host: "sh.ilinkai.weixin.qq.com"
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
         }
-      });
+      );
     });
 
     const client = new ClawbotAuthClient({
-      baseUrl: "https://weknora.weixin.qq.com",
+      baseUrl: "https://ilinkai.weixin.qq.com",
+      channelVersion: "1.0.0",
       fetcher: fetchMock
     });
 
-    await expect(client.resetChannel({ botToken: "bot-token", channelId: "bot@im.bot" })).resolves.toEqual({
-      channelId: "bot@im.bot"
+    await expect(client.pollQrStatus("qr-token")).resolves.toEqual({
+      status: "scaned",
+      redirectBaseUrl: "https://sh.ilinkai.weixin.qq.com"
     });
   });
 
-  test("raises a typed error when the bootstrap API rejects a request", async () => {
+  test("raises a typed error when the QR endpoint rejects a request", async () => {
     const fetchMock = mock(async () => {
-      return new Response(JSON.stringify({ success: false, message: "bad request" }), {
+      return new Response(JSON.stringify({ errmsg: "bad request", ret: 4001 }), {
         status: 400,
         headers: {
           "content-type": "application/json"
@@ -119,7 +127,8 @@ describe("ClawbotAuthClient", () => {
     });
 
     const client = new ClawbotAuthClient({
-      baseUrl: "https://weknora.weixin.qq.com",
+      baseUrl: "https://ilinkai.weixin.qq.com",
+      channelVersion: "1.0.0",
       fetcher: fetchMock
     });
 
