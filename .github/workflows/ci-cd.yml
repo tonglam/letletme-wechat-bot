@@ -69,12 +69,12 @@ jobs:
           script: |
             mkdir -p "${{ env.APP_HOME }}"/{dist,logs,run,state,scripts}
             if [ ! -f "${{ env.APP_HOME }}/.env" ]; then
-              cat > "${{ env.APP_HOME }}/.env" <<EOF
-WECHAT_STATE_FILE_PATH=${{ env.APP_HOME }}/state/wechat-state.json
-BUN_CMD=${{ env.BUN_CMD }}
-PORT=${{ env.APP_PORT }}
-TIMEZONE=Australia/Perth
-EOF
+              printf '%s\n' \
+                "WECHAT_STATE_FILE_PATH=${{ env.APP_HOME }}/state/wechat-state.json" \
+                "BUN_CMD=${{ env.BUN_CMD }}" \
+                "PORT=${{ env.APP_PORT }}" \
+                "TIMEZONE=Australia/Perth" \
+                > "${{ env.APP_HOME }}/.env"
               chmod 600 "${{ env.APP_HOME }}/.env"
             fi
 
