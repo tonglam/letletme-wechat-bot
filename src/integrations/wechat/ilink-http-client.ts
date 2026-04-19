@@ -90,12 +90,16 @@ export class IlinkHttpClient {
 }
 
 async function parseJsonSafely(response: Response) {
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/json")) {
+  const text = await response.text();
+  if (!text) {
     return undefined;
   }
 
-  return response.json();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }
 
 function extractErrorMessage(body: unknown, fallback: string) {
