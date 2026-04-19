@@ -2,6 +2,7 @@ import { Elysia, t } from "elysia";
 
 import type { BindingAdminServicePort } from "../application/services/binding-admin-service.ts";
 import type { NotificationServicePort } from "../application/services/notification-service.ts";
+import type { Fetcher } from "../integrations/wechat/ilink-helpers.ts";
 
 const textNotificationSchema = t.Object({
   type: t.Literal("text"),
@@ -27,26 +28,56 @@ type CreateAppOptions = {
   adminService: BindingAdminServicePort;
   notificationApiToken: string | undefined;
   adminApiToken: string | undefined;
+  fetcher?: Fetcher;
 };
 
 export function createApp({
   notificationService,
   adminService,
   notificationApiToken,
-  adminApiToken
+  adminApiToken,
+  fetcher = fetch
 }: CreateAppOptions) {
   return new Elysia()
     .get("/health", () => ({
       status: "ok"
     }))
     .get("/wechatBot/letletme/admin", ({ headers, query, set }) => {
-      if (adminApiToken && !isPageAuthorized(headers.authorization, query.token, adminApiToken)) {
+      if (adminApiToken && !isAdminAuthorized(headers.authorization, query.token, adminApiToken)) {
         set.status = 401;
         return unauthorizedResponse();
       }
 
       set.headers["content-type"] = "text/html; charset=utf-8";
       return renderAdminPage();
+    })
+    .get("/wechatBot/letletme/admin/binding/qrcode/image", async ({ headers, query, set }) => {
+      if (adminApiToken && !isAdminAuthorized(headers.authorization, query.token, adminApiToken)) {
+        set.status = 401;
+        return unauthorizedResponse();
+      }
+
+      const state = await adminService.getState();
+      const qrcodeUrl = state.binding.pendingQrcodeUrl;
+      if (!qrcodeUrl) {
+        set.status = 404;
+        return {
+          code: "qr_not_found",
+          message: "No pending QR image is available."
+        };
+      }
+
+      const response = await fetcher(qrcodeUrl);
+      if (!response.ok) {
+        set.status = 502;
+        return {
+          code: "qr_proxy_error",
+          message: `Failed to load QR image from upstream (HTTP ${response.status}).`
+        };
+      }
+
+      set.headers["content-type"] = response.headers.get("content-type") ?? "image/png";
+      return new Uint8Array(await response.arrayBuffer());
     })
     .post(
       "/wechatBot/letletme/notification",
@@ -65,16 +96,16 @@ export function createApp({
         body: t.Union([textNotificationSchema, imageNotificationSchema])
       }
     )
-    .get("/wechatBot/letletme/admin/state", async ({ headers, set }) => {
-      if (adminApiToken && !isAuthorized(headers.authorization, adminApiToken)) {
+    .get("/wechatBot/letletme/admin/state", async ({ headers, query, set }) => {
+      if (adminApiToken && !isAdminAuthorized(headers.authorization, query.token, adminApiToken)) {
         set.status = 401;
         return unauthorizedResponse();
       }
 
       return adminService.getState();
     })
-    .post("/wechatBot/letletme/admin/binding/qrcode", async ({ headers, set }) => {
-      if (adminApiToken && !isAuthorized(headers.authorization, adminApiToken)) {
+    .post("/wechatBot/letletme/admin/binding/qrcode", async ({ headers, query, set }) => {
+      if (adminApiToken && !isAdminAuthorized(headers.authorization, query.token, adminApiToken)) {
         set.status = 401;
         return unauthorizedResponse();
       }
@@ -85,8 +116,8 @@ export function createApp({
         return adminErrorResponse(error, set);
       }
     })
-    .post("/wechatBot/letletme/admin/binding/poll", async ({ headers, set }) => {
-      if (adminApiToken && !isAuthorized(headers.authorization, adminApiToken)) {
+    .post("/wechatBot/letletme/admin/binding/poll", async ({ headers, query, set }) => {
+      if (adminApiToken && !isAdminAuthorized(headers.authorization, query.token, adminApiToken)) {
         set.status = 401;
         return unauthorizedResponse();
       }
@@ -99,8 +130,8 @@ export function createApp({
     })
     .post(
       "/wechatBot/letletme/admin/targets",
-      async ({ body, headers, set }) => {
-        if (adminApiToken && !isAuthorized(headers.authorization, adminApiToken)) {
+      async ({ body, headers, query, set }) => {
+        if (adminApiToken && !isAdminAuthorized(headers.authorization, query.token, adminApiToken)) {
           set.status = 401;
           return unauthorizedResponse();
         }
@@ -111,16 +142,16 @@ export function createApp({
         body: targetSchema
       }
     )
-    .delete("/wechatBot/letletme/admin/targets/:alias", async ({ params, headers, set }) => {
-      if (adminApiToken && !isAuthorized(headers.authorization, adminApiToken)) {
+    .delete("/wechatBot/letletme/admin/targets/:alias", async ({ params, headers, query, set }) => {
+      if (adminApiToken && !isAdminAuthorized(headers.authorization, query.token, adminApiToken)) {
         set.status = 401;
         return unauthorizedResponse();
       }
 
       return adminService.removeTarget(params.alias);
     })
-    .post("/wechatBot/letletme/admin/binding/reset", async ({ headers, set }) => {
-      if (adminApiToken && !isAuthorized(headers.authorization, adminApiToken)) {
+    .post("/wechatBot/letletme/admin/binding/reset", async ({ headers, query, set }) => {
+      if (adminApiToken && !isAdminAuthorized(headers.authorization, query.token, adminApiToken)) {
         set.status = 401;
         return unauthorizedResponse();
       }
@@ -141,7 +172,7 @@ function isAuthorized(header: string | undefined, expectedToken: string): boolea
   return header === `Bearer ${expectedToken}`;
 }
 
-function isPageAuthorized(header: string | undefined, queryToken: string | undefined, expectedToken: string): boolean {
+function isAdminAuthorized(header: string | undefined, queryToken: string | undefined, expectedToken: string): boolean {
   if (isAuthorized(header, expectedToken)) {
     return true;
   }
@@ -345,6 +376,16 @@ function renderAdminPage() {
         qrShellEl.innerHTML = '<img alt="WeChat QR code" src="' + url + '">';
       }
 
+      const token = new URLSearchParams(window.location.search).get("token");
+
+      function withToken(path) {
+        const url = new URL(path, window.location.origin);
+        if (token) {
+          url.searchParams.set("token", token);
+        }
+        return url.pathname + url.search;
+      }
+
       async function api(path, options = {}) {
         const response = await fetch(path, {
           ...options,
@@ -362,7 +403,7 @@ function renderAdminPage() {
       }
 
       async function refreshState() {
-        const state = await api("/wechatBot/letletme/admin/state");
+        const state = await api(withToken("/wechatBot/letletme/admin/state"));
         const binding = state.binding;
 
         if (binding.status === "confirmed") {
@@ -381,7 +422,7 @@ function renderAdminPage() {
 
         if (binding.status === "pending") {
           renderStatus("Pending scan", "warning");
-          renderQr(binding.pendingQrcodeUrl);
+          renderQr(withToken("/wechatBot/letletme/admin/binding/qrcode/image?ts=" + Date.now()));
           regenerateButton.hidden = true;
           renderMeta([
             "QR token: <code>" + binding.pendingQrcode + "</code>",
@@ -403,8 +444,8 @@ function renderAdminPage() {
         regenerateButton.hidden = true;
         renderStatus("Requesting QR code...", "warning");
         try {
-          const body = await api("/wechatBot/letletme/admin/binding/qrcode", { method: "POST" });
-          renderQr(body.qrcodeUrl);
+          const body = await api(withToken("/wechatBot/letletme/admin/binding/qrcode"), { method: "POST" });
+          renderQr(withToken("/wechatBot/letletme/admin/binding/qrcode/image?ts=" + Date.now()));
           renderStatus("QR generated", "warning");
           renderMeta([
             "QR token: <code>" + body.qrcode + "</code>",
@@ -421,7 +462,7 @@ function renderAdminPage() {
 
       async function pollBinding() {
         try {
-          const body = await api("/wechatBot/letletme/admin/binding/poll", { method: "POST" });
+          const body = await api(withToken("/wechatBot/letletme/admin/binding/poll"), { method: "POST" });
           if (body.status === "confirmed") {
             renderStatus("Confirmed", "ok");
             renderQr(null);

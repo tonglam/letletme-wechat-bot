@@ -1,10 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 
 import type { BindingAdminServicePort } from "../../src/application/services/binding-admin-service.ts";
 import type { NotificationServicePort } from "../../src/application/services/notification-service.ts";
 import { createApp } from "../../src/http/create-app.ts";
 
 describe("http routes", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
   const adminService: BindingAdminServicePort = {
     createQrCode: async () => ({
       qrcode: "qr-token",
@@ -22,11 +26,9 @@ describe("http routes", () => {
     }),
     getState: async () => ({
       binding: {
-        status: "confirmed",
-        accountId: "bot@im.bot",
-        userId: "user@im.wechat",
-        baseUrl: "https://ilinkai.weixin.qq.com",
-        savedAt: "2026-04-19T00:00:00.000Z"
+        status: "pending",
+        pendingQrcode: "qr-token",
+        pendingQrcodeUrl: "https://example.com/qr.png"
       },
       targets: [
         {
@@ -160,6 +162,39 @@ describe("http routes", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
     await expect(response.text()).resolves.toContain("WeChat Admin");
+  });
+
+  test("proxies the pending QR image through the admin route", async () => {
+    const service: NotificationServicePort = {
+      send: async () => {
+        throw new Error("send should not be called");
+      }
+    };
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("https://example.com/qr.png");
+      return new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: {
+          "content-type": "image/png"
+        }
+      });
+    });
+
+    const app = createApp({
+      notificationService: service,
+      adminService,
+      notificationApiToken: undefined,
+      adminApiToken: "admin-secret",
+      fetcher: fetchMock
+    });
+
+    const response = await app.handle(
+      new Request("http://localhost/wechatBot/letletme/admin/binding/qrcode/image?token=admin-secret")
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([1, 2, 3]);
   });
 
   test("rejects unauthorized admin callers when an admin API token is configured", async () => {
