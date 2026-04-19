@@ -67,12 +67,12 @@ export function createApp({
         };
       }
 
-      const response = await fetcher(qrcodeUrl);
+      const response = await fetcher(buildQrImageUrl(qrcodeUrl));
       if (!response.ok) {
         set.status = 502;
         return {
           code: "qr_proxy_error",
-          message: `Failed to load QR image from upstream (HTTP ${response.status}).`
+          message: `Failed to render QR image from upstream (HTTP ${response.status}).`
         };
       }
 
@@ -210,6 +210,15 @@ function unauthorizedResponse() {
   };
 }
 
+function buildQrImageUrl(qrcodeUrl: string) {
+  const url = new URL("https://api.qrserver.com/v1/create-qr-code/");
+  url.searchParams.set("size", "320x320");
+  url.searchParams.set("data", qrcodeUrl);
+  url.searchParams.set("ecc", "M");
+  url.searchParams.set("margin", "0");
+  return url.toString();
+}
+
 function renderAdminPage() {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -303,15 +312,8 @@ function renderAdminPage() {
       .qr-shell img {
         width: min(320px, 100%);
         height: 320px;
-        border: 0;
         border-radius: 16px;
-        background: white;
-      }
-      .qr-shell iframe {
-        width: min(280px, 100%);
-        height: 320px;
-        border: 0;
-        border-radius: 16px;
+        border: 1px solid #e5eadb;
         background: white;
       }
       .hint {
@@ -381,7 +383,7 @@ function renderAdminPage() {
           return;
         }
 
-        qrShellEl.innerHTML = '<iframe title="WeChat QR code" src="' + url + '" loading="eager" referrerpolicy="no-referrer"></iframe>';
+        qrShellEl.innerHTML = '<img alt="WeChat QR code" src="' + url + '">';
       }
 
       const token = new URLSearchParams(window.location.search).get("token");

@@ -171,7 +171,7 @@ describe("http routes", () => {
       }
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("https://example.com/qr.png");
+      expect(String(input)).toBe("https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=https%3A%2F%2Fexample.com%2Fqr.png&ecc=M&margin=0");
       return new Response(new Uint8Array([1, 2, 3]), {
         status: 200,
         headers: {
