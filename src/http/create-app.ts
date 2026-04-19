@@ -326,6 +326,9 @@ function renderAdminPage() {
       .warning {
         color: var(--warning);
       }
+      .ok {
+        color: var(--accent-dark);
+      }
       .meta {
         display: grid;
         gap: 10px;
@@ -417,15 +420,33 @@ function renderAdminPage() {
         const binding = state.binding;
 
         if (binding.status === "confirmed") {
-          renderStatus("Confirmed", "ok");
+          const session = binding.session;
+          const sessionLabel = formatSession(session);
+          const tone = session && session.status === "rebind_required"
+            ? "error"
+            : session && session.status === "unknown"
+              ? "warning"
+              : "ok";
+
+          renderStatus("Confirmed" + (session ? " · " + sessionLabel : ""), tone);
           renderQr(null);
           regenerateButton.hidden = true;
-          renderMeta([
+          const lines = [
             "Account: <code>" + binding.accountId + "</code>",
             "User: <code>" + binding.userId + "</code>",
             "Base URL: <code>" + binding.baseUrl + "</code>",
             "Saved: <code>" + binding.savedAt + "</code>"
-          ]);
+          ];
+
+          if (session) {
+            lines.push("Session: <code>" + sessionLabel + "</code>");
+            lines.push("Checked: <code>" + session.checkedAt + "</code>");
+            if (session.detail) {
+              lines.push("Detail: " + session.detail);
+            }
+          }
+
+          renderMeta(lines);
           stopPolling();
           return;
         }
@@ -519,6 +540,13 @@ function renderAdminPage() {
           window.clearInterval(pollTimer);
           pollTimer = null;
         }
+      }
+
+      function formatSession(session) {
+        if (!session) return "";
+        if (session.status === "valid") return "valid";
+        if (session.status === "rebind_required") return "rebind required";
+        return "check inconclusive";
       }
 
       generateButton.addEventListener("click", generateQr);

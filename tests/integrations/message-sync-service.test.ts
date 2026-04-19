@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 
+import { WechatApiError } from "../../src/integrations/wechat/ilink-http-client.ts";
 import { WechatMessageSyncService } from "../../src/integrations/wechat/message-sync-service.ts";
 
 describe("WechatMessageSyncService", () => {
@@ -72,5 +73,65 @@ describe("WechatMessageSyncService", () => {
 
     expect(storedCursor).toBe("cursor-1");
     expect(rememberCalls).toEqual([{ userId: "ops@im.wechat", contextToken: "ctx-123" }]);
+  });
+
+  test("classifies session expiry as rebind required", async () => {
+    const service = new WechatMessageSyncService(
+      {
+        getCredentials: async () => ({
+          token: "bot-token",
+          accountId: "bot@im.bot",
+          userId: "bot-user@im.wechat",
+          baseUrl: "https://ilinkai.weixin.qq.com",
+          savedAt: "2026-04-19T00:00:00.000Z"
+        }),
+        getCursor: async () => "",
+        setCursor: async () => undefined,
+        rememberContextToken: async () => undefined
+      },
+      {
+        channelVersion: "1.0.0",
+        fetcher: async () => {
+          throw new WechatApiError("session expired", {
+            statusCode: 401,
+            code: -14
+          });
+        }
+      }
+    );
+
+    await expect(service.probeSession()).resolves.toMatchObject({
+      status: "rebind_required",
+      detail: "session expired"
+    });
+  });
+
+  test("treats long-poll timeout as a valid session", async () => {
+    const service = new WechatMessageSyncService(
+      {
+        getCredentials: async () => ({
+          token: "bot-token",
+          accountId: "bot@im.bot",
+          userId: "bot-user@im.wechat",
+          baseUrl: "https://ilinkai.weixin.qq.com",
+          savedAt: "2026-04-19T00:00:00.000Z"
+        }),
+        getCursor: async () => "",
+        setCursor: async () => undefined,
+        rememberContextToken: async () => undefined
+      },
+      {
+        channelVersion: "1.0.0",
+        fetcher: async () => {
+          const error = new Error("timed out");
+          error.name = "TimeoutError";
+          throw error;
+        }
+      }
+    );
+
+    await expect(service.probeSession()).resolves.toMatchObject({
+      status: "valid"
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 
-import { IlinkHttpClient } from "./ilink-http-client.ts";
+import type { BindingSessionSummary } from "../../application/services/binding-admin-service.ts";
+import { IlinkHttpClient, WechatApiError } from "./ilink-http-client.ts";
 import { buildAuthHeaders, buildBaseInfo, type Fetcher } from "./ilink-helpers.ts";
 import { USER_MESSAGE_TYPE, type WechatCredentials, type WireMessage } from "./wechat-types.ts";
 
@@ -55,6 +56,43 @@ export class WechatMessageSyncService {
   }
 
   async syncOnce(signal?: AbortSignal) {
+    return this.syncWithTimeout(40_000, signal);
+  }
+
+  async probeSession(): Promise<BindingSessionSummary> {
+    const checkedAt = new Date().toISOString();
+
+    try {
+      await this.syncWithTimeout(2_500);
+      return {
+        status: "valid",
+        checkedAt
+      };
+    } catch (error) {
+      if (error instanceof WechatApiError && error.code === -14) {
+        return {
+          status: "rebind_required",
+          checkedAt,
+          detail: error.message
+        };
+      }
+
+      if (isAbortLikeError(error)) {
+        return {
+          status: "valid",
+          checkedAt
+        };
+      }
+
+      return {
+        status: "unknown",
+        checkedAt,
+        detail: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  private async syncWithTimeout(timeoutMs: number, signal?: AbortSignal) {
     const credentials = await this.stateStore.getCredentials();
     if (!credentials) {
       return;
@@ -70,7 +108,7 @@ export class WechatMessageSyncService {
       },
       {
         headers: buildAuthHeaders(credentials.token, this.options.channelVersion, this.options.skRouteTag),
-        timeoutMs: 40_000,
+        timeoutMs,
         ...(signal ? { signal } : {})
       }
     );

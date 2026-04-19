@@ -9,8 +9,15 @@ export type BindingSummary = {
   userId?: string | undefined;
   baseUrl?: string | undefined;
   savedAt?: string | undefined;
+  session?: BindingSessionSummary | undefined;
   pendingQrcode?: string | undefined;
   pendingQrcodeUrl?: string | undefined;
+};
+
+export type BindingSessionSummary = {
+  status: "valid" | "rebind_required" | "unknown";
+  checkedAt: string;
+  detail?: string | undefined;
 };
 
 export type AdminState = {
@@ -30,6 +37,7 @@ export interface BindingAdminServicePort {
 type SyncLifecyclePort = {
   start(): void;
   stop(): void;
+  probeSession?(): Promise<BindingSessionSummary>;
 };
 
 export class BindingAdminService implements BindingAdminServicePort {
@@ -82,9 +90,14 @@ export class BindingAdminService implements BindingAdminServicePort {
   async getState(): Promise<AdminState> {
     const credentials = await this.stateStore.getCredentials();
     const pendingQr = await this.stateStore.getPendingQr();
+    const binding = summarizeBinding(credentials, pendingQr);
+
+    if (credentials && this.syncService?.probeSession) {
+      binding.session = await this.syncService.probeSession();
+    }
 
     return {
-      binding: summarizeBinding(credentials, pendingQr),
+      binding,
       targets: await this.stateStore.list()
     };
   }
