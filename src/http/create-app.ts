@@ -301,9 +301,17 @@ function renderAdminPage() {
         padding: 18px;
       }
       .qr-shell img {
-        width: min(280px, 100%);
+        width: min(320px, 100%);
+        height: 320px;
+        border: 0;
         border-radius: 16px;
-        border: 1px solid #e5eadb;
+        background: white;
+      }
+      .qr-shell iframe {
+        width: min(280px, 100%);
+        height: 320px;
+        border: 0;
+        border-radius: 16px;
         background: white;
       }
       .hint {
@@ -373,7 +381,7 @@ function renderAdminPage() {
           return;
         }
 
-        qrShellEl.innerHTML = '<img alt="WeChat QR code" src="' + url + '">';
+        qrShellEl.innerHTML = '<iframe title="WeChat QR code" src="' + url + '" loading="eager" referrerpolicy="no-referrer"></iframe>';
       }
 
       const token = new URLSearchParams(window.location.search).get("token");
