@@ -85,6 +85,28 @@ describe("http routes", () => {
     });
   });
 
+  test("exposes an unauthenticated health endpoint", async () => {
+    const service: NotificationServicePort = {
+      send: async () => {
+        throw new Error("send should not be called");
+      }
+    };
+
+    const app = createApp({
+      notificationService: service,
+      adminService,
+      notificationApiToken: "notify-secret",
+      adminApiToken: "admin-secret"
+    });
+
+    const response = await app.handle(new Request("http://localhost/health"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      status: "ok"
+    });
+  });
+
   test("creates a qrcode binding request through the admin API", async () => {
     const service: NotificationServicePort = {
       send: async () => {

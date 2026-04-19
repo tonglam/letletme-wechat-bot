@@ -36,6 +36,9 @@ export function createApp({
   adminApiToken
 }: CreateAppOptions) {
   return new Elysia()
+    .get("/health", () => ({
+      status: "ok"
+    }))
     .post(
       "/wechatBot/letletme/notification",
       async ({ body, headers, set }) => {

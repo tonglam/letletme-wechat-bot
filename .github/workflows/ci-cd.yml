@@ -6,6 +6,11 @@ on:
       - "**"
   workflow_dispatch:
 
+env:
+  APP_HOME: /home/workspace/letletme-wechat-bot
+  APP_PORT: 8027
+  BUN_CMD: /home/deploy/.bun/bin/bun
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -58,30 +63,47 @@ jobs:
       - name: Create app home on server
         uses: appleboy/ssh-action@v1.2.2
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USERNAME }}
+          host: ${{ vars.DEPLOY_HOST }}
+          username: ${{ vars.DEPLOY_USERNAME }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            mkdir -p /home/workspace/letletme-wechat-bot/{dist,logs,run,state,scripts}
+            mkdir -p "${{ env.APP_HOME }}"/{dist,logs,run,state,scripts}
+            if [ ! -f "${{ env.APP_HOME }}/.env" ]; then
+              cat > "${{ env.APP_HOME }}/.env" <<EOF
+WECHAT_STATE_FILE_PATH=${{ env.APP_HOME }}/state/wechat-state.json
+BUN_CMD=${{ env.BUN_CMD }}
+PORT=${{ env.APP_PORT }}
+TIMEZONE=Australia/Perth
+EOF
+              chmod 600 "${{ env.APP_HOME }}/.env"
+            fi
 
       - name: Copy bundle to server
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USERNAME }}
+          host: ${{ vars.DEPLOY_HOST }}
+          username: ${{ vars.DEPLOY_USERNAME }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           source: "letletme-wechat-bot-dist.tar.gz"
-          target: "/home/workspace/letletme-wechat-bot/"
+          target: "${{ env.APP_HOME }}/"
           strip_components: 0
 
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.2.2
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USERNAME }}
+          host: ${{ vars.DEPLOY_HOST }}
+          username: ${{ vars.DEPLOY_USERNAME }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            cd /home/workspace/letletme-wechat-bot
+            cd "${{ env.APP_HOME }}"
             tar -xzf letletme-wechat-bot-dist.tar.gz
             chmod +x scripts/*.sh
             ./scripts/rerun.sh
+            for _ in {1..20}; do
+              if curl -fsS "http://127.0.0.1:${{ env.APP_PORT }}/health" >/dev/null; then
+                exit 0
+              fi
+              sleep 2
+            done
+            ./scripts/monitor.sh
+            exit 1
